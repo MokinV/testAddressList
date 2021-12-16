@@ -47,66 +47,74 @@ class AddressList extends \CBitrixComponent
     {
         $arResult = [];
         $arResult["GRID_ID"] = self::GRID_ID;
-        if ($this->idUser) {
-            $arParams = $this->arParams;
 
-            $gridOptions = new GridOptions($arResult["GRID_ID"]);
-            $navParams = $gridOptions->GetNavParams();
-            $sort = $gridOptions->getSorting();
-            $arResult["NAV"] = new PageNavigation($arResult["GRID_ID"]);
-            $arResult["NAV"]->allowAllRecords(true)
-                ->setPageSize($navParams['nPageSize'])
-                ->initFromUri();
+        $arParams = $this->arParams;
 
-            if ($arResult["NAV"]->allRecordsShown()) {
-                $navParams = false;
-            } else {
-                $navParams['iNumPage'] = $arResult["NAV"]->getCurrentPage();
-            }
+        $gridOptions = new GridOptions($arResult["GRID_ID"]);
+        $navParams = $gridOptions->GetNavParams();
+        $sort = $gridOptions->getSorting();
+        $arResult["NAV"] = new PageNavigation($arResult["GRID_ID"]);
+        $arResult["NAV"]->allowAllRecords(true)
+            ->setPageSize($navParams['nPageSize'])
+            ->initFromUri();
 
-            $query = new Query($this->entityHlBlock);
-            $arFilter = [
-                self::P_USER => $this->idUser
+        if ($arResult["NAV"]->allRecordsShown()) {
+            $navParams = false;
+        } else {
+            $navParams['iNumPage'] = $arResult["NAV"]->getCurrentPage();
+        }
+
+        $query = new Query($this->entityHlBlock);
+        $arFilter = [
+            self::P_USER => $this->idUser
+        ];
+        if ($arParams["SHOW_DEACTIVATED"] !== "Y") {
+            $arFilter[self::P_ACTIVE] = true;
+        }
+        $query->setFilter($arFilter);
+        $query->setSelect(["ID", self::P_ADDRESS]);
+        $query->setCacheTtl(self::TTL);
+        $query->setLimit($navParams['nPageSize']);
+        $query->setOffset($navParams['iNumPage'] - 1);
+        if (isset($sort["sort"])) {
+            $query->setOrder($sort["sort"]);
+        }
+        $arResult["COUNT_TOTAL"] = $query->queryCountTotal();
+        $arResult["NAV"]->setRecordCount($arResult["COUNT_TOTAL"]);
+        $query->exec();
+
+        foreach ($query->fetchAll() as $item) {
+            $arResult["ROWS"][] = [
+                "data" => $item
             ];
-            if ($arParams["SHOW_DEACTIVATED"] !== "Y") {
-                $arFilter[self::P_ACTIVE] = true;
-            }
-            $query->setFilter($arFilter);
-            $query->setSelect(["ID", self::P_ADDRESS]);
-            $query->setCacheTtl(self::TTL);
-            $query->setLimit($navParams['nPageSize']);
-            $query->setOffset($navParams['iNumPage'] - 1);
-            if (isset($sort["sort"])) {
-                $query->setOrder($sort["sort"]);
-            }
-            $arResult["COUNT_TOTAL"] = $query->queryCountTotal();
-            $arResult["NAV"]->setRecordCount($arResult["COUNT_TOTAL"]);
-            $query->exec();
-
-            foreach ($query->fetchAll() as $item) {
-                $arResult["ROWS"][] = [
-                    "data" => $item
+        };
+        if (is_array($arResult["ROWS"]) and count($arResult["ROWS"])) {
+            $sort = 1;
+            foreach (array_keys(current($arResult["ROWS"])["data"]) as $key) {
+                $name = Loc::getMessage("COLUMN_$key");
+                $arResult["COLUMNS"][] = [
+                    "id" => $key,
+                    "name" => $name,
+                    "content" => $name,
+                    "title" => $name,
+                    "sort" => $key,
+                    "column_sort" => $sort,
+                    "default" => true
                 ];
-            };
-            if (is_array($arResult["ROWS"]) and count($arResult["ROWS"])) {
-                $sort = 1;
-                foreach (array_keys(current($arResult["ROWS"])["data"]) as $key) {
-                    $name = Loc::getMessage("COLUMN_$key");
-                    $arResult["COLUMNS"][] = [
-                        "id" => $key,
-                        "name" => $name,
-                        "content" => $name,
-                        "title" => $name,
-                        "sort" => $key,
-                        "column_sort" => $sort,
-                        "default" => true
-                    ];
-                    $sort++;
-                }
+                $sort++;
             }
         }
 
         $this->arResult = $arResult;
+        $this->SetResultCacheKeys(
+            [
+                'COLUMNS',
+                'COUNT_TOTAL',
+                'GRID_ID',
+                'ROWS',
+                'NAV'
+            ]
+        );
     }
 
     /**
@@ -118,7 +126,8 @@ class AddressList extends \CBitrixComponent
     protected function checkModules()
     {
         if (!Loader::includeModule('highloadblock')) {
-            throw new SystemException(Loc::getMessage('MODULE_NOT_INSTALLED', ['#NAME#' => 'highloadblock']));
+            $this->AbortResultCache();
+            throw new SystemException(Loc::getMessage('MODULE_NOT_INCLUDED', ['#MODULE#' => 'highloadblock']));
         }
     }
 
@@ -137,6 +146,7 @@ class AddressList extends \CBitrixComponent
         $query->exec();
         $arHighLoadBlock = $query->fetch();
         if (empty($arHighLoadBlock)) {
+            $this->AbortResultCache();
             throw new SystemException(Loc::getMessage('HLBLOCK_404'));
         }
         $this->idHlBlock = $arHighLoadBlock["ID"];
@@ -150,10 +160,17 @@ class AddressList extends \CBitrixComponent
     public function executeComponent()
     {
         try {
-            $this->checkModules();
-            $this->checkHighLoadBlock();
-            $this->getResult();
-            $this->includeComponentTemplate();
+            if ($this->idUser) {
+                if ($this->StartResultCache(false, $this->idUser)) {
+                    $this->checkModules();
+                    $this->checkHighLoadBlock();
+                    $this->getResult();
+                }
+
+                $this->includeComponentTemplate();
+            } else {
+                $this->AbortResultCache();
+            }
         } catch (SystemException $e) {
             ShowError($e->getMessage());
         }

@@ -48,7 +48,7 @@ if (isset($arResult["COLUMNS"])) {
     ?>
     <script>
         BX.ready(function () {
-            let gridObject = BX.Main.gridManager.getById('<?= $arResult["GRID_ID"] ?>');
+            var gridObject = BX.Main.gridManager.getById('<?= $arResult["GRID_ID"] ?>');
             if (gridObject.hasOwnProperty('instance')) {
                 gridObject.instance.reloadTable(null, null);
             }

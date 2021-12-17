@@ -1,4 +1,5 @@
 <?php
+
 if (!defined("B_PROLOG_INCLUDED") || B_PROLOG_INCLUDED !== true) {
     die();
 }
@@ -12,12 +13,14 @@ use \Bitrix\Main\Engine\CurrentUser;
 use \Bitrix\Main\ORM\Entity;
 use \Bitrix\Main\Grid\Options as GridOptions;
 use \Bitrix\Main\UI\PageNavigation;
+use \Bitrix\Main\Entity\Event;
 
 class AddressList extends \CBitrixComponent
 {
     const TABLE_NAME = "b_list_addresses";
     const GRID_ID = "ADDRESS_LIST";
     const TTL = 3600;
+    const CACHE_ID = 'cacheAddressList';
 
     const P_USER = "UF_USER_ID";
     const P_ADDRESS = "UF_ADDRESS";
@@ -30,7 +33,7 @@ class AddressList extends \CBitrixComponent
     /**
      * @param CBitrixComponent|NULL $component
      */
-    public function __construct(CBitrixComponent $component = NULL)
+    public function __construct(CBitrixComponent $component = null)
     {
         parent::__construct($component);
 
@@ -132,6 +135,21 @@ class AddressList extends \CBitrixComponent
     }
 
     /**
+     * @return array|false
+     * @throws SystemException
+     * @throws \Bitrix\Main\ArgumentException
+     * @throws \Bitrix\Main\ObjectPropertyException
+     */
+    protected function getHighLoadBlock()
+    {
+        $query = new Query(HighloadBlockTable::getEntity());
+        $query->setFilter(["TABLE_NAME" => self::TABLE_NAME]);
+        $query->setSelect(["*"]);
+        $query->exec();
+        return $query->fetch();
+    }
+
+    /**
      * Есть ли highloadblock, проверка по имени таблицы b_list_addresses
      * @return void
      * @throws SystemException
@@ -140,11 +158,7 @@ class AddressList extends \CBitrixComponent
      */
     protected function checkHighLoadBlock()
     {
-        $query = new Query(HighloadBlockTable::getEntity());
-        $query->setFilter(["TABLE_NAME" => self::TABLE_NAME]);
-        $query->setSelect(["*"]);
-        $query->exec();
-        $arHighLoadBlock = $query->fetch();
+        $arHighLoadBlock = self::getHighLoadBlock();
         if (empty($arHighLoadBlock)) {
             $this->AbortResultCache();
             throw new SystemException(Loc::getMessage('HLBLOCK_404'));
@@ -159,9 +173,13 @@ class AddressList extends \CBitrixComponent
      */
     public function executeComponent()
     {
+        global $CACHE_MANAGER;
         try {
             if ($this->idUser) {
-                if ($this->StartResultCache(false, $this->idUser)) {
+                if ($this->StartResultCache(self::TTL, $this->idUser)) {
+                    if (defined("BX_COMP_MANAGED_CACHE")) {
+                        $CACHE_MANAGER->registerTag(self::CACHE_ID . "_" . $this->idUser);
+                    }
                     $this->checkModules();
                     $this->checkHighLoadBlock();
                     $this->getResult();
@@ -174,5 +192,72 @@ class AddressList extends \CBitrixComponent
         } catch (SystemException $e) {
             ShowError($e->getMessage());
         }
+    }
+
+    /**
+     * @param int $id
+     * @return int
+     * @throws SystemException
+     * @throws \Bitrix\Main\ArgumentException
+     * @throws \Bitrix\Main\ObjectPropertyException
+     */
+    public function getUserByID(int $id): int
+    {
+        $arHighLoadBlock = self::getHighLoadBlock();
+        if (isset($arHighLoadBlock)) {
+            $query = new Query(HighloadBlockTable::compileEntity($arHighLoadBlock));
+            $query->setFilter(["ID" => $id]);
+            $query->setSelect(["ID", self::P_USER]);
+            $query->setLimit(1);
+            $query->exec();
+            return intval($query->fetch()[self::P_USER]);
+        }
+        return 0;
+    }
+
+    /**
+     * @param Event $event
+     * @return void
+     */
+    public static function OnAfterAdd(Event $event)
+    {
+        global $CACHE_MANAGER;
+        $arFields = $event->getParameter("fields");
+        $CACHE_MANAGER->ClearByTag(self::CACHE_ID . "_" . $arFields[self::P_USER]);
+    }
+
+    /**
+     * @param Event $event
+     * @return void
+     * @throws SystemException
+     * @throws \Bitrix\Main\ArgumentException
+     * @throws \Bitrix\Main\ObjectPropertyException
+     */
+    public function OnBeforeUpdate(Event $event)
+    {
+        global $CACHE_MANAGER;
+        // Обновляем у предыдущего пользователя
+        $id = $event->getParameter("id");
+        $id = $id["ID"];
+        $CACHE_MANAGER->ClearByTag(self::CACHE_ID . "_" . self::getUserByID($id));
+
+        // Обновляем у нового пользователя
+        $arFields = $event->getParameter("fields");
+        $CACHE_MANAGER->ClearByTag(self::CACHE_ID . "_" . $arFields[self::P_USER]);
+    }
+
+    /**
+     * @param Event $event
+     * @return void
+     * @throws SystemException
+     * @throws \Bitrix\Main\ArgumentException
+     * @throws \Bitrix\Main\ObjectPropertyException
+     */
+    public function OnBeforeDelete(Event $event)
+    {
+        global $CACHE_MANAGER;
+        $id = $event->getParameter("id");
+        $id = $id["ID"];
+        $CACHE_MANAGER->ClearByTag(self::CACHE_ID . "_" . self::getUserByID($id));
     }
 }
